@@ -26,6 +26,8 @@ from werkzeug._internal import _empty_stream, _encode_idna
 from werkzeug.http import is_resource_modified, http_date
 from werkzeug.urls import uri_to_iri, url_quote, url_parse, url_join
 
+import jarray
+
 
 def responder(f):
     """Marks a function as responder.  Decorate a function with it and it
@@ -713,6 +715,8 @@ def wrap_file(environ, file, buffer_size=8192):
     """
     return environ.get('wsgi.file_wrapper', FileWrapper)(file, buffer_size)
 
+def wrap_reader(reader, buffer_size=8192):
+    return ReaderWrapper(reader, buffer_size)
 
 @implements_iterator
 class FileWrapper(object):
@@ -750,6 +754,44 @@ class FileWrapper(object):
             return data
         raise StopIteration()
 
+@implements_iterator
+class ReaderWrapper(object):
+    """
+    Wrap Java's BufferedReader
+    """
+
+    def __init__(self, reader, buffer_size=8192):
+        self.reader = reader
+        self.buffer_size = buffer_size
+        self.data = []
+        self._len = 0
+
+        buf = jarray.zeros(self.buffer_size, 'c')
+        status = self.reader.read(buf, 0, self.buffer_size)
+        while status != -1:
+            self._len += status
+            self.data.extend(buf[:status])
+            status = self.reader.read(buf, 0, self.buffer_size)
+        self.data = ''.join(self.data)
+
+    def close(self):
+        self.reader.close()
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        segment = self.data[:self.buffer_size]
+        if segment:
+            self.data = self.data[self.buffer_size:]
+            return segment
+        raise StopIteration()
+
+    def __len__(self):
+        return self._len
+
+    def read(self):
+        return self.data
 
 def _make_chunk_iter(stream, limit, buffer_size):
     """Helper for the line and chunk iter functions."""
